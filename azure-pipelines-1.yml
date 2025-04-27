@@ -1,0 +1,91 @@
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+stages:
+- stage: Build
+  jobs:
+  - job: BuildJob
+    steps:
+    - checkout: self   # Pull your code
+    - task: NodeTool@0  # Install Node.js (if it's a Node app)
+      inputs:
+        versionSpec: '18.x'
+    - script: |
+        npm install
+        npm run build
+      displayName: 'Build Application'
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: 'drop'
+
+- stage: SecurityScan
+  dependsOn: Build
+  jobs:
+  - job: SASTandDependencyScan
+    steps:
+    - checkout: self
+    - task: SnykSecurityScan@1
+      inputs:
+        serviceConnectionEndpoint: 'snyk-connection'
+        testType: 'app'
+        monitorOnBuild: true
+    - task: WhiteSourceBolt@20
+      inputs:
+        cwd: '$(Build.SourcesDirectory)'
+        configFile: 'whitesource.config'
+
+- stage: ContainerBuildAndScan
+  dependsOn: SecurityScan
+  jobs:
+  - job: BuildAndScanContainer
+    steps:
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'your-acr-service-connection'
+        repository: 'your-app'
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
+        tags: |
+          $(Build.BuildId)
+    - task: Trivy@0
+      inputs:
+        imageName: 'your-acr.azurecr.io/your-app:$(Build.BuildId)'
+        format: 'table'
+- stage: DeployToDev
+  dependsOn: ContainerBuildAndScan
+  jobs:
+  - deployment: DevDeploy
+    environment: 'dev'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            inputs:
+              action: deploy
+              manifests: '**/manifests/dev/*.yaml'
+              kubernetesServiceConnection: 'aks-dev-connection'
+              namespace: 'dev'
+- stage: ApproveAndDeployProd
+  dependsOn: DeployToDev
+  condition: succeeded()
+  jobs:
+  - deployment: ProdDeploy
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: ManualValidation@0
+            inputs:
+              instructions: 'Please validate deployment to production.'
+          - task: KubernetesManifest@0
+            inputs:
+              action: deploy
+              manifests: '**/manifests/prod/*.yaml'
+              kubernetesServiceConnection: 'aks-prod-connection'
+              namespace: 'prod'
