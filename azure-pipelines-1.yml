@@ -52,6 +52,11 @@ stages:
         tags: |
           $(Build.BuildId)
     - task: Trivy@0
+    - script: |
+    curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -
+    ./trivy image your-acr.azurecr.io/your-app:$(Build.BuildId)
+  displayName: 'Trivy Scan'
+
       inputs:
         imageName: 'your-acr.azurecr.io/your-app:$(Build.BuildId)'
         format: 'table'
