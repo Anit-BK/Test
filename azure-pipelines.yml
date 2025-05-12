@@ -1,20 +1,82 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
-
+# azure-pipelines.yml
 trigger:
-- main
+  branches:
+    include:
+      - main
 
-pool:
-  vmImage: ubuntu-latest
+variables:
+  imageRepository: 'youracr.azurecr.io/aks-store'
+  dockerRegistryServiceConnection: 'AzureACRServiceConnection'
+  kubernetesServiceConnection: 'AzureK8sServiceConnection'
+  containerRegistry: 'youracr.azurecr.io'
+  tag: '$(Build.BuildId)'
+  aksNamespace: 'default'
 
-steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+stages:
+  - stage: Build
+    displayName: Build and Push Docker Images
+    jobs:
+      - job: Build
+        displayName: Build Images
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Docker@2
+            displayName: Build Frontend
+            inputs:
+              command: build
+              repository: '$(imageRepository)/frontend'
+              dockerfile: 'frontend/Dockerfile'
+              tags: '$(tag)'
 
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
-  
+          - task: Docker@2
+            displayName: Build Backend
+            inputs:
+              command: build
+              repository: '$(imageRepository)/backend'
+              dockerfile: 'backend/Dockerfile'
+              tags: '$(tag)'
+
+          - task: Docker@2
+            displayName: Push Frontend
+            inputs:
+              command: push
+              repository: '$(imageRepository)/frontend'
+              tags: '$(tag)'
+              containerRegistry: '$(dockerRegistryServiceConnection)'
+
+          - task: Docker@2
+            displayName: Push Backend
+            inputs:
+              command: push
+              repository: '$(imageRepository)/backend'
+              tags: '$(tag)'
+              containerRegistry: '$(dockerRegistryServiceConnection)'
+
+  - stage: Deploy
+    displayName: Deploy to AKS
+    dependsOn: Build
+    jobs:
+      - job: Deploy
+        displayName: Deploy to AKS
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Kubernetes@1
+            displayName: Set image for frontend
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceConnection: '$(kubernetesServiceConnection)'
+              namespace: '$(aksNamespace)'
+              command: 'set'
+              arguments: 'image deployment/frontend frontend=$(imageRepository)/frontend:$(tag)'
+
+          - task: Kubernetes@1
+            displayName: Set image for backend
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceConnection: '$(kubernetesServiceConnection)'
+              namespace: '$(aksNamespace)'
+              command: 'set'
+              arguments: 'image deployment/backend backend=$(imageRepository)/backend:$(tag)'
+
